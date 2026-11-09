@@ -122,6 +122,17 @@ public class AboutDialog extends JDialog {
 				+ System.getProperty("os.version") + " / " + System.getProperty("os.arch"));
 		addRow(panel, gc, "程序目录", home);
 		addRow(panel, gc, "数据文件", home + File.separator + "instances.json");
+
+		// ---- Git 信息 (构建时注入, 开发态显示 N/A) ----
+		GitInfo git = GitInfo.load();
+		if (git.available()) {
+			addRow(panel, gc, "仓库", git.url);
+			addRow(panel, gc, "提交", git.commitShort + " (" + git.branch + ")");
+			addRow(panel, gc, "构建", git.buildTime);
+		} else {
+			addRow(panel, gc, "仓库", "(开发态, 未构建)");
+		}
+
 		addRow(panel, gc, "第三方组件",
 				"FlatLaf 3.5.4 · Hutool 5.8.34 · OSHI 6.4.2 · SLF4J 1.7.36 · Logback 1.2.13");
 
@@ -226,6 +237,12 @@ public class AboutDialog extends JDialog {
 				.append(System.getProperty("os.version")).append(" / ")
 				.append(System.getProperty("os.arch")).append('\n');
 		sb.append("程序目录: ").append(home).append('\n');
+		GitInfo git = GitInfo.load();
+		if (git.available()) {
+			sb.append("仓库: ").append(git.url).append('\n');
+			sb.append("提交: ").append(git.commitShort).append(" (").append(git.branch).append(")\n");
+			sb.append("构建: ").append(git.buildTime).append('\n');
+		}
 		try {
 			Toolkit.getDefaultToolkit().getSystemClipboard()
 					.setContents(new StringSelection(sb.toString()), null);
@@ -264,5 +281,46 @@ public class AboutDialog extends JDialog {
 		} catch (Exception ignored) {
 		}
 		return "1.1.0";
+	}
+
+	// ==================== Git 信息 (构建时注入) ====================
+
+	/**
+	 * 从 /git-info.properties 读取 Git 元信息.
+	 * 构建脚本 (build.ps1) 在 maven package 前生成此文件.
+	 * 开发态 (IDE 直接运行) 不存在此文件, available() 返回 false.
+	 */
+	static class GitInfo {
+		final String url;
+		final String commit;
+		final String commitShort;
+		final String branch;
+		final String buildTime;
+		final boolean present;
+
+		private GitInfo(Properties p, boolean present) {
+			this.present = present;
+			this.url = p.getProperty("url", "");
+			this.commit = p.getProperty("commit", "");
+			this.commitShort = p.getProperty("commit.short", "");
+			this.branch = p.getProperty("branch", "");
+			this.buildTime = p.getProperty("build.time", "");
+		}
+
+		boolean available() {
+			return present && !commit.isEmpty();
+		}
+
+		static GitInfo load() {
+			try (InputStream in = AboutDialog.class.getResourceAsStream("/git-info.properties")) {
+				if (in != null) {
+					Properties p = new Properties();
+					p.load(in);
+					return new GitInfo(p, true);
+				}
+			} catch (Exception ignored) {
+			}
+			return new GitInfo(new Properties(), false);
+		}
 	}
 }

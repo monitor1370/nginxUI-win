@@ -62,3 +62,6 @@ nginxUI-离线版使用说明.html
 
 # ============== 发布脚本 (含 Token 敏感信息, 本地专用) ==============
 release.ps1
+
+# ============== 构建时自动生成, 不入库 ==============
+src/main/resources/git-info.properties
