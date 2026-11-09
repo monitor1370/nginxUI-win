@@ -48,3 +48,14 @@ release.properties
 runtime/
 jre/
 jdk/
+
+# ============== 阶段性报告 (不上传 GitHub) ==============
+WindowsServer兼容性评估报告.md
+v1-*.md
+页面文案冗余评估报告.md
+*-现状核查报告.md
+*-验收清单.md
+*-评估报告.md
+
+# ============== 离线版使用说明 HTML (本地文档) ==============
+nginxUI-离线版使用说明.html
