@@ -1,0 +1,321 @@
+<p style="margin:10px 0 6px 0;color:#55606b;font-size:14px;"><strong style="color:#12324f;">适用版本：</strong>v1.1.0　<strong style="color:#12324f;">适用系统：</strong>Windows Server 2016 及以上 / Windows 10、Windows 11（64 位）　<strong style="color:#12324f;">权限要求：</strong>管理员</p>
+
+<p style="margin:0 0 16px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#33475b;font-size:14px;">本文档面向不熟悉 nginx 的运维与开发人员，说明在<strong>无外网或不便联网</strong>的 Windows 服务器上，如何用 nginxUI 完成「安装实例 → 启停 → 改配置 → 升级 → 替换证书 → 启用 HTTPS」的完整流程。</p>
+
+<p style="margin:0 0 20px 0;color:#6b7784;font-size:13px;">本文档为纯 HTML，不含脚本与外部样式，可直接在百度 UEditor 中全选粘贴使用。</p>
+
+<h2 id="s1" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">一、产品概述</h2>
+
+<p style="margin:0 0 12px 0;color:#33475b;font-size:14px;line-height:1.9;">nginxUI 是一个 nginx 图形化管理工具，把 nginx 以 <strong>Windows 服务</strong>的方式纳管，提供安装、升级、配置编辑、证书替换、站点 HTTPS 启用、启停与状态监控等能力，所有会改动配置的操作都会先执行 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code> 校验，失败不落地。</p>
+
+<p style="margin:0 0 8px 0;color:#33475b;font-size:14px;line-height:1.9;">核心约定：</p>
+
+<ul style="margin:0 0 18px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>每个实例对应一个 Windows 服务，服务名格式为 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx-win-ngui-N</code>。</li>
+<li>同一时刻只允许执行一个长操作（安装、升级、回滚、证书写入、监控写入、启停），其它入口会自动置灰并提示原因。</li>
+<li>所有危险操作都会弹出确认框，文案包含「操作对象 + 后果 + 是否可撤销」，默认按钮为「取消」。</li>
+</ul>
+
+<h2 id="s2" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">二、运行环境与前置条件</h2>
+
+<table border="1" cellspacing="0" cellpadding="0" width="100%" style="border-collapse:collapse;border-color:#c6d6e4;font-size:14px;">
+<tr style="background-color:#e2ecf8;">
+<th align="left" width="22%" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">项目</th>
+<th align="left" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">要求</th>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">操作系统</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">Windows Server 2016 及以上；Windows 10 / 11（均为 64 位）</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">权限</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">必须以管理员身份运行（安装、服务注册、目录写入均需要管理员权限）</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">端口</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">默认使用 80 / 443；如被占用需先释放或改用其它端口</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">离线安装包</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">官方 nginx 压缩包，文件名形如 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx-1.24.0.zip</code>，版本号需可从包名或目录结构识别</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">磁盘</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">每个实例需要独立目录，建议预留 200MB 以上</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">防火墙</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">如需对外提供访问，放行对应端口（默认 80 / 443）</td>
+</tr>
+</table>
+
+<h2 id="s3" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">三、安装前准备（离线环境）</h2>
+
+<ol style="margin:0 0 18px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>在可联网的机器上下载官方 nginx Windows 版压缩包（.zip），拷贝到目标服务器。</li>
+<li>确认目标服务器 80 / 443 未被其它程序占用（如 IIS、其它 nginx、Tomcat 等）。</li>
+<li>确认将以<strong>管理员身份</strong>启动 nginxUI，否则安装阶段会因权限不足失败。</li>
+<li>规划安装根目录。每个实例会在此目录下创建独立子目录，互不影响。</li>
+</ol>
+
+<h2 id="s4" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">四、安装实例（离线安装）</h2>
+
+<p style="margin:0 0 14px 0;color:#33475b;font-size:14px;line-height:1.9;">进入左侧导航 <strong style="color:#12324f;">安装实例</strong>，在页面顶部把安装方式切换为 <strong style="color:#12324f;">离线安装</strong>，按三步向导完成。</p>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">第 1 步：选择版本</h3>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>点击 <strong>上传安装包…</strong>，选择准备好的 nginx 压缩包。</li>
+<li>工具会解压并校验包结构，成功后显示识别到的版本号；校验失败会提示具体原因。</li>
+<li>如上传错误，点击 <strong>清除</strong> 重新选择。</li>
+</ul>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">第 2 步：安装位置</h3>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li><strong>安装根目录</strong> 可手动输入，也可点击 <strong>选择目录…</strong> 选择。</li>
+<li>目录必须存在且当前账号（管理员）有写入权限。</li>
+</ul>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">第 3 步：实例名称</h3>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>名称格式固定为 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx-win-ngui-N</code>，前缀不可修改。</li>
+<li><code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">N</code> 为 1～6 位整数且必须大于 0，不能有前导零。</li>
+<li>默认自动生成可用名称；如需修改，点击 <strong>自定义 N…</strong> 后输入。</li>
+</ul>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">安装结果</h3>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>安装完成后实例出现在「实例总览」，Windows 服务已注册但<strong>默认不启动</strong>。</li>
+<li>安装阶段只做 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code> 校验与服务注册，<strong>不会</strong>写入站点、代理或 HTTPS 配置，也不会预检端口占用。</li>
+<li>业务配置的常规做法：拿到后端应用服务器 IP 后，在外部改好 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx.conf</code>，再通过「配置文件编辑」统一替换。</li>
+</ul>
+
+<h2 id="s5" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">五、实例总览与启停</h2>
+
+<p style="margin:0 0 14px 0;color:#33475b;font-size:14px;line-height:1.9;">左侧导航 <strong style="color:#12324f;">实例总览</strong> 列出全部实例，并展示运行状态、版本、配置路径、端口等信息。</p>
+
+<table border="1" cellspacing="0" cellpadding="0" width="100%" style="border-collapse:collapse;border-color:#c6d6e4;font-size:14px;">
+<tr style="background-color:#e2ecf8;">
+<th align="left" width="18%" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">操作</th>
+<th align="left" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">说明</th>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">启动</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">启动对应 Windows 服务；启动前会先做配置校验</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">停止</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">停止服务，站点立即不可访问；会弹出确认框</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">重启</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">先停止再启动，用于让新配置生效</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">配置测试</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">执行 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code>，只校验不改动</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">更多</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">打开配置目录、日志目录、忽略/恢复实例、重命名等</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">监控开关</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">只控制本页是否采集与展示状态数据，<strong>不改写</strong> nginx 配置</td>
+</tr>
+</table>
+
+<p style="margin:14px 0 0 0;padding:10px 14px;background-color:#f0f7f2;border-left:4px solid #3f9d5a;color:#2c5f3c;font-size:14px;line-height:1.9;">状态会定时自动刷新，界面与实际服务状态最长 10 秒内保持一致；如刚完成外部操作，可点击刷新立即同步。</p>
+
+<h2 id="s6" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">六、配置文件编辑</h2>
+
+<p style="margin:0 0 12px 0;color:#33475b;font-size:14px;line-height:1.9;">选中实例后进入左侧导航 <strong style="color:#12324f;">配置文件编辑</strong>。</p>
+
+<ol style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li><strong>读取文件</strong>：从磁盘加载当前 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx.conf</code>。</li>
+<li><strong>编辑</strong>：进入编辑态后可修改内容，此时「读取文件」等入口会置灰，避免覆盖未保存内容。</li>
+<li><strong>配置测试</strong>：执行 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code>，只校验语法与引用，不落地。</li>
+<li><strong>重新启动</strong>：应用当前内容并重启服务；执行前会备份原配置。</li>
+<li><strong>还原</strong>：放弃未保存修改，恢复为磁盘上的内容。</li>
+</ol>
+
+<p style="margin:0 0 18px 0;padding:10px 14px;background-color:#fff8e6;border-left:4px solid #e6a23c;color:#7a5a12;font-size:14px;line-height:1.9;"><strong>注意：</strong><code style="padding:1px 5px;background-color:#fdf3d6;border:1px solid #f0dcae;border-radius:3px;color:#a86a00;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code> 不检查端口是否被占用，端口冲突只会在服务真正启动时暴露。</p>
+
+<h2 id="s7" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">七、版本升级与回滚</h2>
+
+<p style="margin:0 0 12px 0;color:#33475b;font-size:14px;line-height:1.9;">左侧导航 <strong style="color:#12324f;">版本升级</strong>，先确认页面顶部显示的是目标实例。</p>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">升级</h3>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li><strong>在线升级</strong>：选择版本列表中的稳定版后点击升级（需要外网可达）。</li>
+<li><strong>离线升级</strong>：上传本地 nginx 安装包并校验，通过后执行升级。</li>
+<li>升级前旧版本二进制与配置会自动备份，升级过程中会提示阶段进度。</li>
+<li>升级期间会禁止重复触发，并锁定其它长操作入口。</li>
+</ul>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">回滚</h3>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>存在升级记录时 <strong>回滚</strong> 按钮可用，点击后恢复上一版本并重新启动服务。</li>
+<li>回滚同样会弹出确认框，说明对象、影响与可撤销性。</li>
+</ul>
+
+<h2 id="s8" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">八、证书管理与 HTTPS</h2>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">8.1 证书库</h3>
+
+<p style="margin:0 0 10px 0;color:#33475b;font-size:14px;line-height:1.9;">左侧导航 <strong style="color:#12324f;">证书管理</strong> 用于集中管理证书文件：</p>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li><strong>导入证书…</strong>：导入 PEM 证书与私钥，自动校验是否配对、是否过期。</li>
+<li><strong>更换证书文件…</strong>：替换某条证书的证书/私钥内容。</li>
+<li><strong>编辑信息…</strong>：修改名称、备注等描述信息，不改动密钥内容。</li>
+<li><strong>删除证书</strong>：删除前会检查是否仍被站点引用。</li>
+<li>列表下方可查看该证书关联的实例与端口，并执行绑定/解绑。</li>
+</ul>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">8.2 替换站点证书</h3>
+
+<p style="margin:0 0 10px 0;color:#33475b;font-size:14px;line-height:1.9;">选中实例与证书后启动替换向导，向导会依次确认：目标实例、证书来源、写入方式（覆盖原文件 / 写入新路径并改写配置）、加密方式。</p>
+
+<ol style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>执行前自动备份原证书文件与配置。</li>
+<li>写入后执行 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code>，失败自动回滚，不产生半配置。</li>
+<li>校验通过后 reload 或重启，使新证书生效。</li>
+<li>如需立即生效，可在向导中选择替换后立即重启。</li>
+</ol>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">8.3 恢复证书备份</h3>
+
+<p style="margin:0 0 16px 0;color:#33475b;font-size:14px;line-height:1.9;">替换向导中提供「恢复备份…」入口，选择历史备份记录后即可恢复证书与相关配置，恢复后同样会校验并重启。</p>
+
+<h3 style="margin:20px 0 10px 0;padding:0 0 5px 0;color:#1f4e79;font-size:16px;border-bottom:1px dashed #cfdae6;">8.4 为站点启用 HTTPS</h3>
+
+<p style="margin:0 0 10px 0;color:#33475b;font-size:14px;line-height:1.9;">左侧导航 <strong style="color:#12324f;">站点管理</strong>，扫描出站点后选择目标站点，点击 <strong>启用 HTTPS</strong> 进入向导：</p>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>选择站点与 HTTPS 监听端口（默认 443）。</li>
+<li>选择证书来源：证书库，或本地上传证书与私钥。</li>
+<li>可选启用「HTTP 跳转到 HTTPS」（301）。</li>
+<li>执行前会备份配置，写入 SSL 监听与证书指令后执行 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code>，失败自动回滚。</li>
+<li>完成后重启实例，用浏览器确认握手证书已更新。</li>
+</ul>
+
+<h2 id="s9" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">九、Nginx 状态监控</h2>
+
+<p style="margin:0 0 10px 0;color:#33475b;font-size:14px;line-height:1.9;">左侧导航 <strong style="color:#12324f;">Nginx 状态</strong> 展示连接数、请求数等指标。</p>
+
+<ul style="margin:0 0 16px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li><strong>启用监控</strong>：向当前实例配置写入带标记的 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">stub_status</code> 配置块，校验通过后应用；运行中的实例会自动重启。</li>
+<li><strong>移除监控</strong>：只删除本工具写入的、带标记的配置块，手工编写的块不会被删除。</li>
+<li>实例总览中的监控开关只影响展示与采集，不改写配置；需要真正清理配置请使用本页的「移除监控」。</li>
+</ul>
+
+<h2 id="s10" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">十、日志查看</h2>
+
+<p style="margin:0 0 16px 0;color:#33475b;font-size:14px;line-height:1.9;">左侧导航 <strong style="color:#12324f;">日志查看</strong> 可按实例查看运行日志，便于定位启动失败、配置错误、证书错误等问题。nginx 自身的错误日志位于实例目录下的 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">logs/error.log</code>。</p>
+
+<h2 id="s11" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">十一、数据与备份</h2>
+
+<table border="1" cellspacing="0" cellpadding="0" width="100%" style="border-collapse:collapse;border-color:#c6d6e4;font-size:14px;">
+<tr style="background-color:#e2ecf8;">
+<th align="left" width="26%" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">内容</th>
+<th align="left" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">位置说明</th>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">实例目录</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">安装时指定的「安装根目录」下的实例子目录，界面会显示完整路径</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">配置文件</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">实例目录下的 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">conf/nginx.conf</code>，可在「配置文件编辑」中查看实际路径</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">运行日志</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">实例目录下的 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">logs/</code>，含 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">error.log</code> 与 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">access.log</code></td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">升级备份</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">升级前自动生成，可在「版本升级」中用于回滚</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">证书备份</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">替换证书前自动生成，可在替换向导中恢复</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">Windows 服务</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">服务名 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx-win-ngui-N</code>，可在「服务」管理器中查看</td>
+</tr>
+</table>
+
+<h2 id="s12" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">十二、常见问题</h2>
+
+<table border="1" cellspacing="0" cellpadding="0" width="100%" style="border-collapse:collapse;border-color:#c6d6e4;font-size:14px;">
+<tr style="background-color:#e2ecf8;">
+<th align="left" width="26%" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">现象</th>
+<th align="left" width="30%" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">原因</th>
+<th align="left" style="padding:9px 12px;border:1px solid #c6d6e4;color:#12324f;">处理方式</th>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">启动失败，日志出现 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">bind() ... failed (10048)</code></td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">端口被其它进程占用；<code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx -t</code> 不检测端口</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">用 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">netstat -ano | findstr :80</code> 找到占用进程并释放，或改用其它端口后重启</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">安装到一半失败</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">非管理员权限、目录无写权限、安装包结构不合法</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">以管理员身份运行；更换有写权限的目录；重新下载官方安装包</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">服务注册失败</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">缺少管理员权限或服务名已存在</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">以管理员身份运行；换一个未被占用的实例编号 N</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">升级失败提示文件被占用</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">nginx 进程仍在运行</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">先停止实例再升级；失败后使用「回滚」恢复</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">证书提示不匹配或格式不支持</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">私钥与证书不成对，或不是 PEM 格式</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">确认证书与私钥来自同一次签发，统一转换为 PEM 后重新导入</td>
+</tr>
+<tr style="background-color:#f5f9fd;">
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">某按钮变灰无法点击</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">前置条件未满足，或另一个长操作正在执行</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">鼠标悬停查看原因与恢复条件，按提示处理后重试</td>
+</tr>
+<tr>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">界面状态与实际不一致</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">外部修改了服务状态</td>
+<td style="padding:9px 12px;border:1px solid #c6d6e4;color:#33475b;">等待自动刷新（≤10 秒）或点击刷新</td>
+</tr>
+</table>
+
+<h2 id="s13" style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">十三、操作红线</h2>
+
+<ul style="margin:0 0 18px 0;padding:12px 16px 12px 38px;background-color:#fdf2f2;border-left:4px solid #d9534f;color:#7a2b2b;font-size:14px;line-height:2;">
+<li>不要在实例运行中直接替换 <code style="padding:1px 5px;background-color:#f8e6e6;border:1px solid #eecfcf;border-radius:3px;color:#a53232;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx.exe</code>，请使用「版本升级」。</li>
+<li>不要在 nginxUI 执行长操作时，手工改写同一实例的配置文件。</li>
+<li>不要删除实例目录下的 <code style="padding:1px 5px;background-color:#f8e6e6;border:1px solid #eecfcf;border-radius:3px;color:#a53232;font-family:Consolas,Monaco,monospace;font-size:13px;">logs/</code> 与备份目录，否则无法回滚与定位问题。</li>
+<li>不要在本工具写入的 <code style="padding:1px 5px;background-color:#f8e6e6;border:1px solid #eecfcf;border-radius:3px;color:#a53232;font-family:Consolas,Monaco,monospace;font-size:13px;">stub_status</code> 标记块内部手工修改，移除时应通过「移除监控」。</li>
+</ul>
+
+<h2 style="margin:30px 0 14px 0;padding:8px 12px;background-color:#e9f2fb;border-left:4px solid #2b6cb0;border-bottom:1px solid #d7e5f2;color:#12324f;font-size:20px;line-height:1.5;">附录：三分钟快速上手</h2>
+
+<ol style="margin:0 0 18px 0;padding-left:24px;color:#33475b;font-size:14px;line-height:2;">
+<li>以管理员身份启动 nginxUI。</li>
+<li>进入 <strong>安装实例</strong> → 切换 <strong>离线安装</strong> → 上传 nginx 压缩包。</li>
+<li>填写安装根目录，确认实例名称，点击开始安装。</li>
+<li>进入 <strong>实例总览</strong>，启动实例。</li>
+<li>进入 <strong>配置文件编辑</strong>，替换为已准备好的业务 <code style="padding:1px 5px;background-color:#f1f3f5;border:1px solid #e3e6e8;border-radius:3px;color:#c7254e;font-family:Consolas,Monaco,monospace;font-size:13px;">nginx.conf</code>，先「配置测试」再「重新启动」。</li>
+<li>进入 <strong>站点管理</strong>，为需要的站点启用 HTTPS。</li>
+<li>进入 <strong>Nginx 状态</strong>，启用监控查看指标。</li>
+</ol>
+
+<p style="margin:26px 0 0 0;padding-top:12px;border-top:1px solid #dbe5ef;color:#8a96a3;font-size:13px;">文档版本：v1.1.0　最后更新：2026-11-06</p>
